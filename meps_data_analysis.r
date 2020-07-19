@@ -3,20 +3,22 @@
 dir_in = "…/MEPS_data.csv";
 # Enter the location of data analysis results.
 dir_out = "…/output";
-# Name the output files.
+
 now = Sys.time();
 folder_name = paste0(format(now, "%Y%m%d_%H%M%S_"),"output");
 result_name_txt = paste0(format(now, "%Y%m%d_%H%M%S_"),"output.txt");
 result_name_csv = paste0(format(now, "%Y%m%d_%H%M%S_"),"output.csv");
 report_name = paste0(format(now, "%Y%m%d_%H%M%S_"),"Diagnostics_Report.doc");
-# 1/K_1 dataset used.
+# Entire dataset used.
 K_1 = 1;
-# 1/K_2 dataset used in the random forests method for variable selection.
-K_2 = 100;
-# 1/K_3 dataset used in the tree-based method for prediction.
-K_3 = 100;
+# VSURF method.
+K_2 = 1;
+# Tree-fit.
+K_3 = 1;
+# Tree-fit.
+K_4 = 1;
 # Number of factors.
-K = 20;
+K = 1;
 
 # Create a new folder for output.
 if (! file.exists(dir_out)){
@@ -31,38 +33,36 @@ sink(file.path(dir_out, result_name_txt));
 
 cat ("\n\n\n\nDiagnostics on Policy Data\n\n\n\n");
 
-# Test 0: Load and clean data.
-# Read sample policies.
-sample_raw_data=read.csv(dir_in, header = TRUE);
-
-# Select 1/K_1 sample policies.
-set.seed(1);
-train = sample(1:nrow(sample_raw_data),nrow(sample_raw_data)/K_1,replace=FALSE);
-sample_raw_data = sample_raw_data[train,];
-
-# Data structure conversion.
-sample_raw_data[,c("AGE","FAMSZEYR","FAMINC","WAGEP","YEAR")] = lapply(sample_raw_data[,c("AGE","FAMSZEYR","FAMINC","WAGEP","YEAR")], as.numeric);
-
-# Use logistic regression to transform Healthcare expenditure indicators to rates.
-names(sample_raw_data)[1] = "INSURC";
-glm.fit = glm (factor(INSURC)~., data = sample_raw_data, family = "binomial");
-INSURC_rate = predict(glm.fit, type = "response" );
-names(sample_raw_data)[1] = "INSURC_rate";
-sample_raw_data[,1] = INSURC_rate;
-sample_data = sample_raw_data;
-
 # Test 1: Principal Component Analysis (PCA) for Detecting Linearity among Variables.
-# We run PCA over a subset of features.
-# Prepare pool of variables with interaction variables, for PCA.
-sample_data_1 = data.matrix(sample_data, rownames.force = NA);
+# Read sample policies.
+mrm_raw_data=read.csv(dir_in, header = TRUE);
+# mrm_raw_data = mrm_raw_data;
+set.seed(1);
+train = sample(1:nrow(mrm_raw_data),nrow(mrm_raw_data)/K_1,replace=FALSE);
+mrm_raw_data = mrm_raw_data[train,];
+mrm_raw_data[,c("AGE","FAMSZEYR","FAMINC","WAGEP","YEAR")] = lapply(mrm_raw_data[,c("AGE","FAMSZEYR","FAMINC","WAGEP","YEAR")], as.numeric);
+names(mrm_raw_data)[1] = "TOTSLF";
+glm.fit = glm (factor(TOTSLF)~., data = mrm_raw_data, family = "binomial");
+INSURC_rate = predict(glm.fit);
+names(mrm_raw_data)[1] = "INSURC_rate";
+mrm_raw_data[,1] = INSURC_rate;
+mrm_data = mrm_raw_data;
+
 
 # Prepare pool of variables with interaction variables, for PCA.
-# Return features correlation matrix.
-cor(sample_data_1);
+INSURC_rate = mrm_data$INSURC_rate;
+AGE = mrm_data$AGE;
+SEX = mrm_data$SEX;
+RACE = mrm_data$RACE;
+REGION = mrm_data$REGION;
+mrm_data_1 = data.matrix(mrm_data, rownames.force = NA);
+cor(mrm_data_1);
+# mrm_data=data.frame("INSURC_rate" = INSURC_rate,  "AGE" = AGE ,  "SEX" = SEX,
+# "RACE" = RACE, "REGION" = REGION);
 
 # Run PCA over the data.
 # By using scale = TRUE, we scale the variables to have standard deviation 1. We use scale = FALSE since # there is dummy variable.
-pr.out = prcomp ( sample_data_1, scale = FALSE );
+pr.out = prcomp ( mrm_data_1, scale = FALSE );
 
 # Print principal component loadings of each principal component.
 cat ("Test 1: PCA Analysis on All Variables");
@@ -86,22 +86,24 @@ plot ( cumsum ( pve ), xlab = "Number of Principal Components", ylab = "Cumulati
 dev.off();
 
 
+
 # Test 2: Variable Selection: Best Subset Selection.
 # Run logistic regression.
 cat ("\n\n\nResult 2.1: Linear Regression on Full Data:\n\n");
 summary(glm.fit);
-lm.fit = lm (INSURC_rate~., data = sample_raw_data);
+
+lm.fit = lm (INSURC_rate~., data = mrm_raw_data);
 
 # Install package “leaps”, in order to call the function: regsubsets().
 install.packages ( "leaps" );
 library ( leaps );
 
 # Run best subset variables selection, using linear regression model:
+# INSURC_rate ~ ( RACE, AGE, SEX, REGION ).
 set.seed(1);
-regfit.full = regsubsets ( INSURC_rate~., sample_data, nvmax = 200, really.big=T);
+regfit.full = regsubsets ( INSURC_rate~., mrm_data, nvmax = 200, really.big=T);
 reg.summary = summary ( regfit.full );
 
-# Save the results.
 cat ("\n\n\nResult 2.2: Best Subset Variable Selection:\n\n");
 reg.summary;
 
@@ -172,16 +174,16 @@ mat [ , xvars ]%*%coefi
 # k-fold cross-validation for all the models with different subsets of variables.
 k = 5;
 set.seed ( 1 );
-n_row = nrow ( sample_data );
+n_row = nrow ( mrm_data );
 n_col = regfit.full$np-2;
 folds = sample ( 1:k, n_row, replace = TRUE );
 cv.errors = matrix ( NA, k, n_col, dimnames = list ( NULL, paste (1:n_col ) ) );
 for (j in 1:k){
 set.seed(1);
-best.fit = regsubsets ( INSURC_rate ~.,data = sample_data [folds!=j, ], nvmax = n_col, really.big=T );
+best.fit = regsubsets ( INSURC_rate ~.,data = mrm_data [folds!=j, ], nvmax = n_col, really.big=T );
 for ( i in 1:n_col ){
-pred = predict(best.fit, sample_data[folds == j, ], id = i);
-cv.errors [j, i] = mean((sample_data$INSURC_rate [folds == j] - pred)^2)}};
+pred = predict(best.fit, mrm_data[folds == j, ], id = i);
+cv.errors [j, i] = mean((mrm_data$INSURC_rate [folds == j] - pred)^2)}};
 cv.best = apply ( cv.errors, 2, mean );
 cv.best[is.na(cv.best)] = 0;
 
@@ -217,7 +219,7 @@ write.table(coef ( regfit.full,which.min ( apply(cv.errors,2,mean) )), file = fi
 
 # Run forward stepwise subset variables selection, using linear regression model:
 set.seed(1);
-regfit.fwd = regsubsets (INSURC_rate~., sample_data,nvmax = 200, method = "forward", really.big=T);
+regfit.fwd = regsubsets (INSURC_rate~., mrm_data,nvmax = 200, method = "forward", really.big=T);
 reg.summary = summary ( regfit.fwd );
 
 cat ("\n\n\nResult 3.1: Forward Subset Variable Selection:\n\n");
@@ -279,16 +281,16 @@ write.table(coef ( regfit.fwd, which.min ( reg.summary$bic ) ), file = file.path
 # k-fold cross-validation for all the models with different subsets of variables.
 set.seed ( 1 );
 k = 5;
-n_row = nrow ( sample_data );
+n_row = nrow ( mrm_data );
 n_col = regfit.fwd$np-2;
 folds = sample ( 1:k, n_row, replace = TRUE );
 cv.errors = matrix ( NA, k, n_col, dimnames = list ( NULL, paste (1:n_col ) ) );
 for (j in 1:k){
 set.seed(1);
-best.fit = regsubsets ( INSURC_rate~.,data = sample_data [folds!=j, ], nvmax = n_col, method = "forward", really.big=T );
+best.fit = regsubsets ( INSURC_rate~.,data = mrm_data [folds!=j, ], nvmax = n_col, method = "forward", really.big=T );
 for ( i in 1:n_col ){
-pred = predict(best.fit, sample_data [folds == j, ], id = i);
-cv.errors [j, i] = mean((sample_data$INSURC_rate [folds == j] - pred)^2)}};
+pred = predict(best.fit, mrm_data [folds == j, ], id = i);
+cv.errors [j, i] = mean((mrm_data$INSURC_rate [folds == j] - pred)^2)}};
 
 cv.fwd = apply ( cv.errors, 2, mean );
 cv.fwd[is.na(cv.fwd)] = 0;
@@ -320,7 +322,7 @@ write.table(coef ( regfit.fwd,which.min ( apply(cv.errors,2,mean) )), file = fil
 # Test 4: Variable Selection: Backward Stepwise Subset Selection.
 # Run backward stepwise subset variables selection, using linear regression model:
 set.seed(1);
-regfit.bwd = regsubsets ( INSURC_rate~., sample_data,nvmax = 200, method = "backward", really.big=T);
+regfit.bwd = regsubsets ( INSURC_rate~., mrm_data,nvmax = 200, method = "backward", really.big=T);
 reg.summary = summary ( regfit.bwd );
 
 cat ("\n\n\nResult 4.1: Backward Subset Variable Selection:\n\n");
@@ -384,16 +386,17 @@ write.table(coef ( regfit.bwd, which.min ( reg.summary$bic ) ), file = file.path
 # k-fold cross-validation for all the models with different subsets of variables.
 set.seed ( 1 );
 k = 5;
-n_row = nrow ( sample_data );
+n_row = nrow ( mrm_data );
 n_col = regfit.bwd$np-2;
 folds = sample ( 1:k, n_row, replace = TRUE );
 cv.errors = matrix ( NA, k, n_col, dimnames = list ( NULL, paste (1:n_col ) ) );
 for (j in 1:k){
 set.seed(1);
-best.fit = regsubsets ( INSURC_rate~+.,data = sample_data [folds!=j, ], nvmax = n_col, method = "backward", really.big=T );
+best.fit = regsubsets ( INSURC_rate~+.,data = mrm_data [folds!=j, ], nvmax = n_col, method = "backward", really.big=T );
 for ( i in 1:n_col ){
-pred = predict(best.fit, sample_data [folds == j, ], id = i);
-cv.errors [j, i] = mean((sample_data$INSURC_rate [folds == j] - pred)^2)}};
+pred = predict(best.fit, mrm_data [folds == j, ], id = i);
+cv.errors [j, i] = mean((mrm_data$INSURC_rate [folds == j] - pred)^2)}};
+
 cv.bwd = apply ( cv.errors, 2, mean );
 cv.bwd [is.na(cv.bwd)] = 0;
 
@@ -428,8 +431,8 @@ install.packages("glmnet");
 library(glmnet);
 
 # x is the set of factors. y is the response variable. grid is candidate values of lambda.
-x = model.matrix (INSURC_rate~.,sample_data) [, -ncol(sample_data)];
-y = sample_data$INSURC_rate;
+x = model.matrix (INSURC_rate~.,mrm_data) [, -ncol(mrm_data)];
+y = mrm_data$INSURC_rate;
 grid = 10^seq (10,-2, length = 100);
 
 # Compute the best lasso model coefficients, by selecting the lambda which minimizes the fitting error.
@@ -457,13 +460,13 @@ library(VSURF);
 library(randomForest);
 
 # Create candidate variables and response.
-x = model.matrix (INSURC_rate~.,sample_data) [, -ncol(sample_data)];
-y = sample_data$INSURC_rate;
-# Perform variable selection over 1/K_2 scenarios.
+x = model.matrix (INSURC_rate~.,mrm_data) [, -ncol(mrm_data)];
+y = mrm_data$INSURC_rate;
+# Perform variable selection over 1/1000 scenarios.
 set.seed(1);
 train = sample (1:nrow(x), nrow(x)/K_2);
 set.seed(1);
-data.vsurf = VSURF (x = x[train,], y = y[train], mtry = regfit.fwd$np/3, parallel = TRUE);
+data.vsurf = VSURF (x = x[train,], y = y[train], ntree=100, mtry = floor(ncol(mrm_data)/3), nfor.thres=25, nfor.interp=10, parallel = TRUE, ncores=5);
 
 cat ("\n\n\nResult 6.1: Variable Selection using Random Forests:\n\n");
 summary (data.vsurf);
@@ -507,10 +510,7 @@ install.packages("randomForest");
 library(randomForest);
 
 # Fit regression tree.
-set.seed(1);
-train = sample(1:nrow(sample_data),nrow(sample_data)/2,replace=FALSE);
-set.seed(1);
-tree.fit=randomForest(INSURC_rate~.,data=sample_data,subset=train,ntry=20,ntree=20,importance=TRUE);
+tree.fit=randomForest(INSURC_rate~.,data=mrm_data,mtry=floor(ncol(mrm_data)/3),ntree=100,importance=TRUE);
 
 cat ("\n\n\nResult 7.1: Fitting by Random Forests:\n\n");
 tree.fit;
@@ -530,10 +530,18 @@ varImpPlot(tree.fit);
 dev.off();
 
 # Use the regression tree to predict the other half data and compute its test MSE.
-yhat=predict(tree.fit,newdata=sample_data[-train,]);
-tree.test=sample_data[-train,"INSURC_rate"];
+k = 5;
+set.seed(1);
+folds = sample(1:k,nrow(mrm_data),replace=TRUE);
+r =0;
+for (j in 1:k) {
+tree.fit=randomForest(INSURC_rate~.,data=mrm_data[folds!=j,],ntry=ncol(mrm_data)/3,ntree=50);
+yhat=predict(tree.fit,newdata=mrm_data[folds==j,]);
+tree.test=mrm_data[folds==j,"INSURC_rate"];
+r = r + mean((yhat-tree.test)^2)
+};
 cat ("\n\n\nResult 7.4: CV Tree:\n\n");
-cv.tree = mean((yhat-tree.test)^2);
+cv.tree = r/k;
 cv.tree[is.na(cv.tree)] = 0;
 cv.tree;
 
@@ -541,36 +549,49 @@ cv.tree;
 # x is the set of factors. y is the response variable. grid is candidate values of lambda.
 install.packages("MASS");
 library(MASS);
-x = model.matrix (INSURC_rate~.,sample_data) [, -ncol(sample_data)];
-y = sample_data$INSURC_rate;
+x = model.matrix (INSURC_rate~.,mrm_data) [, -ncol(mrm_data)];
+y = mrm_data$INSURC_rate;
 grid = 10^seq (10,-2, length = 1000);
 
 # Use half-set cross validation to compute test MSE.
+k = 5;
 set.seed(1);
-train = sample (1:nrow(x), nrow(x) / 2);
-y.test = y[-train];
-ridge.mod = glmnet (x[train,], y[train], alpha = 0, lambda = grid, thresh = 1e-12 );
-ridge.pred = predict (ridge.mod, s = 0.01, newx = x [-train,]);
-cv.ridge = mean ( (ridge.pred - y.test)^2 );
+folds = sample(1:k,nrow(mrm_data),replace=TRUE);
+r =0;
+for (j in 1:k) {
+y.test = y[folds==j];
+ridge.mod = glmnet (x[folds!=j,], y[folds!=j], alpha = 0, lambda = grid, thresh = 1e-12 );
+ridge.pred = predict (ridge.mod, s = 0.01, newx = x [folds==j,]);
+r = r+ mean((ridge.pred - y.test)^2)
+}
+cv.ridge = r/k;
 cv.ridge[is.na(cv.ridge)] = 0;
 
 # Method 3: Lasso regression.
-lasso.mod = glmnet (x[train,], y[train], alpha = 1, lambda = grid, thresh = 1e-12 );
-lasso.pred = predict (lasso.mod, s = 0.01, newx = x [-train,]);
-cv.lasso = mean ( (lasso.pred - y.test)^2 );
+k = 5;
+set.seed(1);
+folds = sample(1:k,nrow(mrm_data),replace=TRUE);
+r =0;
+for (j in 1:k) {
+y.test = y[folds==j];
+lasso.mod = glmnet (x[folds!=j,], y[folds!=j], alpha = 1, lambda = grid, thresh = 1e-12 );
+lasso.pred = predict (lasso.mod, s = 0.01, newx = x [folds==j,]);
+r = r+mean((lasso.pred - y.test)^2)
+};
+cv.lasso = r/k;
 cv.lasso[is.na(cv.lasso)] = 0;
 
 # Use k-fold cross-validation to estimate the test MSE of the current model.
 k = 5;
 set.seed ( 1 );
-n_row = nrow ( sample_data );
+n_row = nrow ( mrm_data );
 folds = sample ( 1:k, n_row, replace = TRUE );
 cv.errors =numeric(k);
 for (j in 1:k){
 set.seed(1);
-current.fit = lm (INSURC_rate~., data = sample_data [folds!=j, ]);
-pred = predict(current.fit, sample_data[folds == j, ]);
-cv.errors [j] = mean((sample_data$INSURC_rate [folds == j] - pred)^2)};
+current.fit = lm (INSURC_rate~., data = mrm_data [folds!=j, ]);
+pred = predict(current.fit, mrm_data[folds == j, ]);
+cv.errors [j] = mean((mrm_data$INSURC_rate [folds == j] - pred)^2)};
 cv.current = mean ( cv.errors);
 cv.current[is.na(cv.current)] = 0;
 
@@ -581,7 +602,7 @@ cv.reg_fwd= min(cv.fwd);
 cv.reg_bwd= min(cv.bwd);
 MSE=c(cv.reg_best,cv.reg_fwd,cv.reg_bwd,cv.tree,cv.ridge,cv.lasso,cv.current);
 
-cat ("\n\n\nResult 7.5: Comparison of All Models – MSE Logit Lapse Rates:\n\n");
+cat ("\n\n\nResult 7.5: Comparison of the 7 Models – MSE Logit Lapse Rates:\n\n");
 list_data = list(c("reg best","reg fwd","reg bwd","random forest","ridge","lasso","current"),MSE);
 list_data;
 cat("\n", file = file.path(dir_out, result_name_csv), append = TRUE);
@@ -602,7 +623,7 @@ dev.off();
 weight = 144*mean(exp(2*INSURC_rate)/(1+exp(INSURC_rate))^4);
 MSE_lapse=c(cv.reg_best,cv.reg_fwd,cv.reg_bwd,cv.tree,cv.ridge,cv.lasso,cv.current)*weight;
 
-cat ("\n\n\nResult 7.5: Comparison of All Models – Lapse Rates:\n\n");
+cat ("\n\n\nResult 7.5: Comparison of the 7 Models – Lapse Rates:\n\n");
 list_data = list(c("reg best","reg fwd","reg bwd","random forest","ridge","lasso","current"),MSE_lapse);
 list_data;
 cat("\n", file = file.path(dir_out, result_name_csv), append = TRUE);
@@ -621,7 +642,15 @@ dev.off();
 
 end = Sys.time();
 
+
 sink (result_name_txt, append = TRUE, split = TRUE);
+
+
+
+
+
+
+
 
 
 # Generate diagnostics report.
@@ -633,7 +662,7 @@ library(rtf);
 report = RTF(report_name);
 
 # Add Title, date and table of content.
-addHeader(report, "              Diagnostics Result Report", subtitle = "                   ------ Health Insurance Data Analysis", font.size = 20);
+addHeader(report, "              Diagnostics Result Report", subtitle = "                   ------ Experience Study on Health Data", font.size = 20);
 addNewLine(report, n = 1);
 
 addParagraph (report, "Data analytics process started at ",now);
@@ -885,7 +914,7 @@ addNewLine(report, n=1);
 addParagraph (report, "The tables below present the variables and coefficients of the best models with i variables, for i going from 1 to", regfit.fwd$np-1, ".");
 addNewLine(report, n=1);
 
-for (i in 1:(regfit.fwd$np-1)){
+for (i in 1:(regfit.fwd$np-2)){
 addParagraph (report, "Result 2.2.1: Forward Stepwise Subset Variable Selection: Model with ",i, " Variables");
 addNewLine(report, n=1);
 table = cbind(names(coef(regfit.fwd,i)), round(coef(regfit.fwd,i),10));
@@ -973,7 +1002,7 @@ addNewLine(report, n=1);
 addParagraph (report, "The tables below present the variables and coefficients of the best models with i variables, for i going from 1 to", regfit.bwd$np-1, ".");
 addNewLine(report, n=1);
 
-for (i in 1:(regfit.bwd$np-1)){
+for (i in 1:(regfit.bwd$np-2)){
 addParagraph (report, "Result 2.3.1: Backward Stepwise Subset Variable Selection: Model with ",i, " Variables");
 addNewLine(report, n=1);
 table = cbind(names(coef(regfit.bwd,i)), round(coef(regfit.bwd,i),10));
@@ -1200,5 +1229,6 @@ addPng(report, "Result_7_6_ Comparison_of_Predictive_Models.png", width = 6, hei
 
 
 done(report);
+
 
 
