@@ -529,21 +529,25 @@ png(file.path(dir_out, "Result_7_3_ Importance_of_Variables.png"));
 varImpPlot(tree.fit);
 dev.off();
 
+
 # Use the regression tree to predict the other half data and compute its test MSE.
 k = 5;
 set.seed(1);
-folds = sample(1:k,nrow(mrm_data),replace=TRUE);
+mrm_data_new = mrm_data[,c(1,11,2,8,4,9, 25,3,6,16, 20,21,17,13,12,5)
+];  # use the 15 variables selected by random forest to calculate test mse
+
+folds = sample(1:k,nrow(mrm_data_new),replace=TRUE);
 r =0;
 for (j in 1:k) {
-tree.fit=randomForest(INSURC_rate~.,data=mrm_data[folds!=j,],ntry=ncol(mrm_data)/3,ntree=50);
-yhat=predict(tree.fit,newdata=mrm_data[folds==j,]);
-tree.test=mrm_data[folds==j,"INSURC_rate"];
+tree.fit=randomForest(INSURC_rate~.,data=mrm_data_new[folds!=j,],ntry=ncol(mrm_data_new)/3,ntree=50);
+yhat=predict(tree.fit,newdata=mrm_data_new[folds==j,]);
+tree.test=mrm_data_new[folds==j,"INSURC_rate"];
 r = r + mean((yhat-tree.test)^2)
 };
-cat ("\n\n\nResult 7.4: CV Tree:\n\n");
 cv.tree = r/k;
 cv.tree[is.na(cv.tree)] = 0;
 cv.tree;
+
 
 # Method 2: Ridge regression.
 # x is the set of factors. y is the response variable. grid is candidate values of lambda.
